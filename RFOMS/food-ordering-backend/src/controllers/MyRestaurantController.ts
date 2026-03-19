@@ -242,10 +242,161 @@ const uploadImage = async (file: Express.Multer.File) => {
   }
 };
 
+// ── CSV Report Download ───────────────────────────────────────────
+const escapeCSV = (value: string): string => {
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+};
+
+const downloadReport = async (req: Request, res: Response) => {
+  try {
+    const restaurant = await Restaurant.findOne({ user: req.userId });
+    if (!restaurant) {
+      return res.status(404).json({ message: "No restaurant found for this owner" });
+    }
+
+    // Build date filter
+    const filter: Record<string, unknown> = { restaurant: restaurant._id };
+    const fromDate = req.query.from ? new Date(req.query.from as string) : null;
+    const toDate = req.query.to ? new Date(req.query.to as string) : null;
+
+    if (fromDate || toDate) {
+      const dateFilter: Record<string, Date> = {};
+      if (fromDate) {
+        fromDate.setHours(0, 0, 0, 0);
+        dateFilter.$gte = fromDate;
+      }
+      if (toDate) {
+        toDate.setHours(23, 59, 59, 999);
+        dateFilter.$lte = toDate;
+      }
+      filter.createdAt = dateFilter;
+    }
+
+    const orders = await Order.find(filter)
+      .populate("user")
+      .populate("deliveryPartner")
+      .sort({ createdAt: -1 });
+
+    const toPaise = (val: number | undefined) => ((val ?? 0) / 100).toFixed(2);
+
+    // CSV header
+    const headers = [
+      "Order ID",
+      "Date",
+      "Time",
+      "Customer Name",
+      "Customer Email",
+      "Phone",
+      "Delivery Address",
+      "City",
+      "Items",
+      "Subtotal (₹)",
+      "Delivery Charges (₹)",
+      "Taxes (₹)",
+      "Packaging (₹)",
+      "Discount (₹)",
+      "Tip (₹)",
+      "Total Amount (₹)",
+      "Payment Status",
+      "Delivery Partner",
+    ];
+
+    const rows: string[][] = [];
+
+    for (const order of orders) {
+      const orderDate = new Date(order.createdAt);
+      const dateStr = orderDate.toLocaleDateString("en-IN");
+      const timeStr = orderDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+      const itemsList = (order.cartItems ?? [])
+        .map((item: any) => `${item.name} x${item.quantity}`)
+        .join("; ");
+
+      // Calculate subtotal from cart items
+      const subtotal = (order.cartItems ?? []).reduce(
+        (sum: number, item: any) => sum + (item.price ?? 0) * (item.quantity ?? 1),
+        0
+      );
+
+      const deliveryUser = order.deliveryPartner as any;
+      const orderUser = order.user as any;
+
+      rows.push([
+        order._id.toString(),
+        dateStr,
+        timeStr,
+        orderUser?.name ?? order.deliveryDetails?.name ?? "N/A",
+        orderUser?.email ?? order.deliveryDetails?.email ?? "N/A",
+        order.deliveryDetails?.phone ?? "",
+        order.deliveryDetails?.addressLine1 ?? "",
+        order.deliveryDetails?.city ?? "",
+        itemsList,
+        toPaise(subtotal),
+        toPaise(restaurant.deliveryPrice),
+        toPaise(order.taxes ?? 0),
+        toPaise(order.packagingCharges ?? 0),
+        toPaise(order.discount ?? 0),
+        toPaise(order.tip ?? 0),
+        toPaise(order.totalAmount ?? 0),
+        order.status ?? "unknown",
+        deliveryUser?.name ?? "Not assigned",
+      ]);
+    }
+
+    // Summary section
+    const totalOrders = orders.length;
+    const totalRevenue = orders.reduce((s, o) => s + (o.totalAmount ?? 0), 0);
+    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    const deliveredCount = orders.filter((o) => o.status === "delivered").length;
+    const cancelledCount = orders.filter((o) => o.status === "cancelled").length;
+    const paidCount = orders.filter((o) =>
+      ["paid", "inProgress", "outForDelivery", "delivered"].includes(o.status ?? "")
+    ).length;
+    const placedCount = orders.filter((o) => o.status === "placed").length;
+
+    // Build CSV string
+    let csv = headers.map(escapeCSV).join(",") + "\n";
+    for (const row of rows) {
+      csv += row.map(escapeCSV).join(",") + "\n";
+    }
+
+    // Append summary
+    csv += "\n";
+    csv += "REPORT SUMMARY\n";
+    csv += `Restaurant,${escapeCSV(restaurant.restaurantName)}\n`;
+    csv += `Report Period,${fromDate ? fromDate.toLocaleDateString("en-IN") : "All time"} to ${toDate ? toDate.toLocaleDateString("en-IN") : "Today"}\n`;
+    csv += `Generated On,${new Date().toLocaleString("en-IN")}\n`;
+    csv += "\n";
+    csv += `Total Orders,${totalOrders}\n`;
+    csv += `Orders Paid,${paidCount}\n`;
+    csv += `Orders Placed (Unpaid),${placedCount}\n`;
+    csv += `Orders Delivered,${deliveredCount}\n`;
+    csv += `Orders Cancelled,${cancelledCount}\n`;
+    csv += `Total Revenue (₹),${toPaise(totalRevenue)}\n`;
+    csv += `Average Order Value (₹),${toPaise(avgOrderValue)}\n`;
+
+    // Set response headers for CSV download
+    const fileName = `${restaurant.restaurantName.replace(/[^a-zA-Z0-9]/g, "_")}_report_${
+      fromDate ? fromDate.toISOString().split("T")[0] : "all"
+    }_to_${toDate ? toDate.toISOString().split("T")[0] : "today"}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(csv);
+  } catch (error) {
+    console.error("Report generation error:", error);
+    res.status(500).json({ message: "Error generating report" });
+  }
+};
+
 export default {
   updateOrderStatus,
   getMyRestaurantOrders,
   getMyRestaurant,
   createMyRestaurant,
   updateMyRestaurant,
+  downloadReport,
 };

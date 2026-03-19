@@ -34,11 +34,24 @@ const serverStartTime = Date.now();
 
 app.use(
   cors({
-    origin: [
-      process.env.FRONTEND_URL,
-      "http://localhost:5173",
-      "http://localhost:3000",
-    ].filter((o): o is string => Boolean(o)),
+    origin: (origin, callback) => {
+      const allowlist = new Set(
+        [
+          process.env.FRONTEND_URL,
+          "http://localhost:5173",
+          "http://localhost:3000",
+        ].filter((o): o is string => Boolean(o))
+      );
+
+      // Allow server-to-server and health-check calls without an Origin header.
+      if (!origin) return callback(null, true);
+
+      if (allowlist.has(origin) || /^https:\/\/.*\.vercel\.app$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],

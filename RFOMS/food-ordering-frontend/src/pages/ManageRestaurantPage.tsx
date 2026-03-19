@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   useCreateMyRestaurant,
   useGetMyRestaurant,
@@ -22,8 +22,12 @@ import {
   IndianRupee,
   Clock,
   CheckCircle,
+  FileDown,
+  Loader2,
 } from "lucide-react";
 import { useQueryClient } from "react-query";
+import { axiosInstance } from "@/lib/api-client";
+import { toast } from "sonner";
 
 const ManageRestaurantPage = () => {
   const { createRestaurant, isLoading: isCreateLoading } =
@@ -47,6 +51,58 @@ const ManageRestaurantPage = () => {
     visibleStatuses.includes(order.status)
   );
   const placedOrders = orders?.filter((order) => order.status === "placed");
+
+  // ── Report Download State ──
+  const today = new Date().toISOString().split("T")[0];
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .split("T")[0];
+
+  const [reportFrom, setReportFrom] = useState(thirtyDaysAgo);
+  const [reportTo, setReportTo] = useState(today);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadReport = async () => {
+    try {
+      setIsDownloading(true);
+      const params = new URLSearchParams();
+      if (reportFrom) params.set("from", reportFrom);
+      if (reportTo) params.set("to", reportTo);
+
+      const response = await axiosInstance.get(
+        `/api/my/restaurant/report?${params.toString()}`,
+        { responseType: "blob" }
+      );
+
+      // Extract filename from Content-Disposition header or use default
+      const contentDisposition = response.headers["content-disposition"];
+      let fileName = "restaurant_report.csv";
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (match) fileName = match[1];
+      }
+
+      // Trigger browser download
+      const blob = new Blob([response.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      toast.success("Report downloaded successfully!");
+    } catch (error: any) {
+      console.error("Report download error:", error);
+      toast.error(
+        error?.response?.data?.message || "Failed to download report"
+      );
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   // Compute order analytics from the existing orders data (updates in real-time via Socket.IO)
   const analytics = useMemo(() => {
@@ -158,6 +214,63 @@ const ManageRestaurantPage = () => {
         </div>
       )}
 
+      {/* ── Download Report Section ── */}
+      {restaurant && (
+        <Card className="border-dashed">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileDown className="h-5 w-5" />
+              Download Report
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-muted-foreground">
+                  From
+                </label>
+                <input
+                  type="date"
+                  value={reportFrom}
+                  onChange={(e) => setReportFrom(e.target.value)}
+                  max={reportTo || today}
+                  className="border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-muted-foreground">
+                  To
+                </label>
+                <input
+                  type="date"
+                  value={reportTo}
+                  onChange={(e) => setReportTo(e.target.value)}
+                  min={reportFrom}
+                  max={today}
+                  className="border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+              <Button
+                onClick={handleDownloadReport}
+                disabled={isDownloading}
+                className="bg-orange-500 hover:bg-orange-600 text-white"
+              >
+                {isDownloading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileDown className="h-4 w-4 mr-2" />
+                )}
+                {isDownloading ? "Generating..." : "Download CSV Report"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Downloads order details, payment status, and revenue summary as a
+              CSV file.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="orders">
         <TabsList>
           <TabsTrigger value="orders">Orders</TabsTrigger>
@@ -209,3 +322,4 @@ const ManageRestaurantPage = () => {
 };
 
 export default ManageRestaurantPage;
+

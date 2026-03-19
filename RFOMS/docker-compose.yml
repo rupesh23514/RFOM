@@ -6,6 +6,8 @@ services:
     build: ./food-ordering-backend
     env_file:
       - ./food-ordering-backend/.env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/rfom
     ports:
       - "5000:5000"
     restart: always

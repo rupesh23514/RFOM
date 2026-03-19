@@ -17,6 +17,9 @@ import { toast } from "sonner";
 
 const testAccounts = {
   "guest-user": { email: "test@user.com", password: "12345678" },
+  "restaurant-owner": { email: "restaurant-owner@dhaba.com", password: "Dhaba@123" },
+  "dhaba-customer": { email: "customer@dhaba.com", password: "Dhaba@123" },
+  "delivery-partner": { email: "delivery@dhaba.com", password: "Dhaba@123" },
 };
 
 type FormData = { email: string; password: string };
@@ -54,7 +57,11 @@ const SignInPage = () => {
       navigate((location.state as { from?: { pathname: string } })?.from?.pathname || "/");
       window.location.reload();
     } catch (err: unknown) {
-      toast.error((err as Error)?.message || "Invalid credentials");
+      toast.error(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        (err as Error)?.message ||
+        "Invalid credentials"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -82,6 +89,9 @@ const SignInPage = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="guest-user">Guest User (test@user.com)</SelectItem>
+              <SelectItem value="restaurant-owner">Restaurant Owner (restaurant-owner@dhaba.com)</SelectItem>
+              <SelectItem value="dhaba-customer">Dhaba Customer (customer@dhaba.com)</SelectItem>
+              <SelectItem value="delivery-partner">Delivery Partner (delivery@dhaba.com)</SelectItem>
               {selectedRole && (
                 <SelectItem value="clear" className="text-gray-400 opacity-60">
                   Clear Selection

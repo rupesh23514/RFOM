@@ -15,6 +15,7 @@ const upload = multer({
   },
 });
 
+router.get("/report", verifyToken, checkRole("restaurant_owner", "admin"), MyRestaurantController.downloadReport);
 router.get("/order", verifyToken, checkRole("restaurant_owner", "admin"), MyRestaurantController.getMyRestaurantOrders);
 router.patch("/order/:orderId/status", verifyToken, checkRole("restaurant_owner", "admin"), MyRestaurantController.updateOrderStatus);
 router.get("/", verifyToken, checkRole("restaurant_owner", "admin"), MyRestaurantController.getMyRestaurant);
