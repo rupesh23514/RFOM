@@ -1,0 +1,83 @@
+name: RFOM CI/CD
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Login to ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION | \
+        docker login --username AWS --password-stdin $ECR_REGISTRY
+
+    - name: Build & Push Backend
+      run: |
+        docker build -t rfoms-backend ./RFOMS/food-ordering-backend
+        docker tag rfoms-backend:latest $ECR_REGISTRY/rfoms-backend:latest
+        docker push $ECR_REGISTRY/rfoms-backend:latest
+
+    - name: Build & Push Frontend
+      run: |
+        docker build -t rfoms-frontend ./RFOMS/food-ordering-frontend
+        docker tag rfoms-frontend:latest $ECR_REGISTRY/rfoms-frontend:latest
+        docker push $ECR_REGISTRY/rfoms-frontend:latest
+
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ec2-user
+        key: ${{ secrets.EC2_SSH_KEY }}
+      env:
+        ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+      script: |
+          # Login to ECR on EC2
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+          # Pull latest images
+          docker pull ${{ secrets.ECR_REGISTRY }}/rfoms-backend:latest
+          docker pull ${{ secrets.ECR_REGISTRY }}/rfoms-frontend:latest
+
+          # Stop and remove old containers
+          docker rm -f rfoms-backend rfoms-frontend 2>/dev/null || true
+
+          # Ensure network exists
+          docker network create rfoms-net 2>/dev/null || true
+
+          # Start backend
+          docker run -d --name rfoms-backend --network rfoms-net --restart always \
+            -p 5000:5000 \
+            -e MONGODB_URI=mongodb://mongodb:27017/rfom \
+            -e FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
+            -e BACKEND_URL=${{ secrets.BACKEND_URL }} \
+            -e JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }} \
+            ${{ secrets.ECR_REGISTRY }}/rfoms-backend:latest
+
+          # Start frontend
+          docker run -d --name rfoms-frontend --restart always \
+            -p 5173:5173 \
+            -e VITE_API_BASE_URL=${{ secrets.BACKEND_URL }} \
+            ${{ secrets.ECR_REGISTRY }}/rfoms-frontend:latest
+
+          # Verify containers are running
+          sleep 5
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
