@@ -46,16 +46,15 @@ jobs:
         host: ${{ secrets.EC2_HOST }}
         username: ec2-user
         key: ${{ secrets.EC2_SSH_KEY }}
-      env:
-        ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
-      script: |
+        envs: ECR_REGISTRY,AWS_REGION,FRONTEND_URL,BACKEND_URL,JWT_SECRET_KEY
+        script: |
           # Login to ECR on EC2
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
-            docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin $ECR_REGISTRY
 
           # Pull latest images
-          docker pull ${{ secrets.ECR_REGISTRY }}/rfoms-backend:latest
-          docker pull ${{ secrets.ECR_REGISTRY }}/rfoms-frontend:latest
+          docker pull $ECR_REGISTRY/rfoms-backend:latest
+          docker pull $ECR_REGISTRY/rfoms-frontend:latest
 
           # Stop and remove old containers
           docker rm -f rfoms-backend rfoms-frontend 2>/dev/null || true
@@ -67,17 +66,24 @@ jobs:
           docker run -d --name rfoms-backend --network rfoms-net --restart always \
             -p 5000:5000 \
             -e MONGODB_URI=mongodb://mongodb:27017/rfom \
-            -e FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
-            -e BACKEND_URL=${{ secrets.BACKEND_URL }} \
-            -e JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }} \
-            ${{ secrets.ECR_REGISTRY }}/rfoms-backend:latest
+            -e FRONTEND_URL=$FRONTEND_URL \
+            -e BACKEND_URL=$BACKEND_URL \
+            -e JWT_SECRET_KEY=$JWT_SECRET_KEY \
+            $ECR_REGISTRY/rfoms-backend:latest
 
           # Start frontend
           docker run -d --name rfoms-frontend --restart always \
             -p 5173:5173 \
-            -e VITE_API_BASE_URL=${{ secrets.BACKEND_URL }} \
-            ${{ secrets.ECR_REGISTRY }}/rfoms-frontend:latest
+            -e VITE_API_BASE_URL=$BACKEND_URL \
+            $ECR_REGISTRY/rfoms-frontend:latest
 
           # Verify containers are running
           sleep 5
           docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+      env:
+        ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+        FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+        BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+
